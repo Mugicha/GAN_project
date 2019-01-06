@@ -6,13 +6,14 @@ from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import UpSampling2D
 from keras.layers.convolutional import Conv2D, MaxPooling2D
 from keras.layers.core import Flatten
-from keras.optimizers import SGD
+from keras.optimizers import Adam
 from keras.datasets import mnist
-import os
+from keras.preprocessing import image
 import numpy as np
 from PIL import Image
 import argparse
 import math
+import matplotlib.pyplot as plt
 
 
 def generator_model():
@@ -29,6 +30,7 @@ def generator_model():
     model.add(UpSampling2D(size=(2, 2)))
     model.add(Conv2D(1, (5, 5), padding='same'))
     model.add(Activation('tanh'))
+    model.summary()
     return model
 
 
@@ -45,6 +47,7 @@ def discriminator_model():
     model.add(Activation('relu'))
     model.add(Dense(1))
     model.add(Activation('sigmoid'))
+    model.summary()
     return model
 
 
@@ -80,13 +83,16 @@ def train(BATCH_SIZE):
     d = discriminator_model()
     g = generator_model()
     d_on_g = generator_containing_discriminator(g, d)
-    d_optim = SGD(lr=0.0005, momentum=0.9, nesterov=True)
-    g_optim = SGD(lr=0.0005, momentum=0.9, nesterov=True)
-    g.compile(loss='binary_crossentropy', optimizer="SGD")
+    # d_optim = SGD(lr=0.0005, momentum=0.9, nesterov=True)
+    # g_optim = SGD(lr=0.0005, momentum=0.9, nesterov=True)
+    d_optim = Adam(lr=0.0005)
+    g_optim = Adam(lr=0.0005)
+    # g.compile(loss='binary_crossentropy', optimizer="SGD")
+    g.compile(loss='binary_crossentropy', optimizer="Adam")
     d_on_g.compile(loss='binary_crossentropy', optimizer=g_optim)
     d.trainable = True
     d.compile(loss='binary_crossentropy', optimizer=d_optim)
-    for epoch in range(100):
+    for epoch in range(1):
         print("Epoch is", epoch)
         print("Number of batches", int(X_train.shape[0]/BATCH_SIZE))
         for index in range(int(X_train.shape[0]/BATCH_SIZE)):
@@ -94,11 +100,13 @@ def train(BATCH_SIZE):
             image_batch = X_train[index*BATCH_SIZE:(index+1)*BATCH_SIZE]
             generated_images = g.predict(noise, verbose=0)
             # Save img.
+            """
             if index % 500 == 0:
                 image = combine_images(generated_images)
                 image = image*127.5+127.5
                 Image.fromarray(image.astype(np.uint8)).save(
                     os.path.join('image', str(epoch)+"_"+str(index)+".png"))
+            """
             X = np.concatenate((image_batch, generated_images))
             y = [1] * BATCH_SIZE + [0] * BATCH_SIZE
             d_loss = d.train_on_batch(X, y)
@@ -111,6 +119,9 @@ def train(BATCH_SIZE):
             if index % 10 == 9:
                 g.save_weights('generator', True)
                 d.save_weights('discriminator', True)
+    # Get feature map and output.
+    x = X_train[0]
+    return x, d
 
 
 def generate(BATCH_SIZE, nice=False):
@@ -154,8 +165,37 @@ def get_args():
 
 
 if __name__ == "__main__":
+    """
     args = get_args()
     if args.mode == "train":
         train(BATCH_SIZE=args.batch_size)
     elif args.mode == "generate":
         generate(BATCH_SIZE=args.batch_size, nice=args.nice)
+    """
+    x, d = train(BATCH_SIZE=100)
+
+    print(len(d.layers[3].get_weights()[0]))  # weights
+    print(len(d.layers[3].get_weights()[1]))  # bias of each filter
+    weights = np.array(
+        d.layers[3].get_weights()[0])  # shape: (5, 5, 64, 128) = (kernel_h, kernel_w, input data num, num of filter)
+    print(weights[:, :, 0, :].shape)
+
+    feature_imgs = []
+    for f in np.split(weights[:, :, 63, :], 128, axis=2):
+        f = image.array_to_img(f)  # 特徴マップを画像化する。
+        f = np.array(f)  # PIL オブジェクトを numpy 配列にする。
+        feature_imgs.append(f)
+
+    cols = 2
+    rows = int(len(feature_imgs) / cols)
+    fig, axes = plt.subplots(rows, cols, figsize=(12, 100))  # cols * 2
+
+    for r in range(rows):
+        for c in range(cols):
+            i = r * cols + c
+            f_axis = axes[r, c]
+            f_axis.imshow(feature_imgs[i], cmap='gray')
+            f_axis.set_title('Filter ' + str(r * 2 + c))
+            f_axis.axis('off')
+
+    plt.show()
